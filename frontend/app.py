@@ -198,7 +198,7 @@ def evaluation_tab(user_id, user_map):
 
 def app():
     st.set_page_config(layout="wide", page_title="RICE - Recomendações")
-    st.title("🎬 RICE: Sistema de Recomendação de Filmes")
+    st.title("🍚 RICE: Recomendações Inteligentes para Cinema e Entretenimento")
 
     catalogo_df = get_catalogo()
     user_map, selectbox_options = get_usuarios_validos()
