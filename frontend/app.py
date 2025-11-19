@@ -174,6 +174,19 @@ def add_evaluation_page(user_id, catalogo_df, user_map):
         except Exception as e:
             st.error(f"Erro de conexão: {e}")
 
+    st.subheader("Histórico de Avaliações do Usuário")
+    try:
+        response = requests.get(f"{BASE_URL}/avaliacoes/{user_id}")
+        response.raise_for_status()
+        avaliacoes = response.json()
+        if avaliacoes:
+            df_avaliacoes = pd.DataFrame(avaliacoes)
+            st.dataframe(df_avaliacoes)
+        else:
+            st.info("Este usuário ainda não possui avaliações.")
+    except Exception as e:
+        st.error(f"Não foi possível carregar as avaliações: {e}")
+
 
 def recommendation_page(user_id, catalogo_df, user_map):
     """Tela para gerar recomendações com layout de Cards."""
@@ -213,8 +226,11 @@ def recommendation_page(user_id, catalogo_df, user_map):
                     with col:
                         # Exibe a imagem/poster
                         if rec.get('poster_link'):
-                            st.image(rec['poster_link'], caption=f"Rank {rank + 1}: {rec['titulo']}",
-                                     use_column_width=True)
+                            st.image(
+                                rec['poster_link'].replace("UX67_CR0,0,67,98", "UX260_CR0,0,260,380"),
+                                caption=f"Rank {rank + 1}: {rec['titulo']}",
+                                use_container_width=True
+                            )
 
                         # Adiciona detalhes do score
                         st.markdown(f"**Score:** `{rec['similaridade']}`")

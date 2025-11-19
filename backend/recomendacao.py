@@ -159,48 +159,42 @@ def salvar_avaliacao(usuario_id: int, filme_id: int, avaliacao: int) -> bool:
 
 def carregar_e_listar_usuarios():
     """
-    Carrega todos os IDs de usuário do avaliacoes.csv e, se possível,
-    combina com os nomes do usuarios.csv para retornar uma lista formatada
-    para o frontend.
+    Carrega nomes de usuarios.csv e complementa com IDs de avaliacoes.csv
+    para retornar uma lista formatada para o frontend.
     """
-    all_users = set()
+    users = {}
 
-    # 1. Obter todos os IDs únicos do dataset principal de avaliações
-    if os.path.exists(AVALIACOES_PATH):
-        avaliacoes = pd.read_csv(AVALIACOES_PATH)
-        all_users.update(avaliacoes['usuario_id'].unique())
-
-    # 2. Inicializar o DataFrame de saída com IDs e um nome padrão
-    df_users = pd.DataFrame(sorted(list(all_users)), columns=['usuario_id'])
-    df_users['nome'] = df_users['usuario_id'].apply(lambda x: f"Usuário {x}")  # Nome padrão
-
-    # 3. Ler e mesclar com nomes persistidos em usuarios.csv
+    # 1. Carrega nomes de usuarios.csv, que é a fonte primária de nomes.
     if os.path.exists(USUARIOS_PATH):
-        df_nomes = pd.read_csv(USUARIOS_PATH)
-
-        if not df_nomes.empty and 'usuario_id' in df_nomes.columns and 'nome' in df_nomes.columns:
-            # Renomeia a coluna 'nome' do arquivo CSV para evitar conflito
-            df_nomes = df_nomes.rename(columns={'nome': 'nome_persistido'})
+        try:
+            df_nomes = pd.read_csv(USUARIOS_PATH)
+            # Garante que não há duplicatas, mantendo o último nome adicionado para um ID
             df_nomes = df_nomes.drop_duplicates(subset=['usuario_id'], keep='last')
+            for _, row in df_nomes.iterrows():
+                users[int(row['usuario_id'])] = row['nome']
+        except Exception:
+            # Ignora erros de leitura em usuarios.csv (arquivo malformado, etc.)
+            pass
 
-            # Merge: Usamos 'right' ou 'outer' para garantir que os novos IDs do usuarios.csv
-            # também sejam incluídos, mesmo que não estejam no avaliacoes.csv
-            df_users = pd.merge(df_users, df_nomes[['usuario_id', 'nome_persistido']],
-                                on='usuario_id',
-                                how='outer')
+    # 2. Garante que todos os usuários que já avaliaram estejam na lista.
+    if os.path.exists(AVALIACOES_PATH):
+        try:
+            df_avaliacoes = pd.read_csv(AVALIACOES_PATH)
+            for user_id in df_avaliacoes['usuario_id'].unique():
+                if int(user_id) not in users:
+                    users[int(user_id)] = f"Usuário {user_id}" # Adiciona com nome padrão
+        except Exception:
+            # Ignora erros de leitura em avaliacoes.csv
+            pass
 
-            # Preenche o nome final: Se nome_persistido existe, usa ele, senão, usa o nome padrão
-            df_users['nome'] = df_users['nome_persistido'].combine_first(df_users['nome'])
+    # 3. Converte para o formato de lista de dicionários esperado.
+    if not users:
+        return []
 
-            # Remove a coluna temporária
-            df_users = df_users.drop(columns=['nome_persistido']).fillna("")
-
-    # Remove linhas duplicadas e garante o formato final
-    df_users = df_users.drop_duplicates(subset=['usuario_id'])
-    df_users = df_users.sort_values(by='usuario_id')
-
-    # 4. Converte para o formato de lista de dicionários esperado pelo frontend
-    usuarios_list = df_users[['usuario_id', 'nome']].to_dict('records')
+    usuarios_list = [{"usuario_id": k, "nome": v} for k, v in users.items()]
+    
+    # Ordena a lista por usuario_id para consistência no frontend
+    usuarios_list.sort(key=lambda x: x['usuario_id'])
 
     return usuarios_list
 
