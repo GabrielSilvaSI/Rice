@@ -1,4 +1,5 @@
 import pandas as pd
+import os
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import linear_kernel
 from numpy import ndarray, mean, array
@@ -6,7 +7,7 @@ from numpy import ndarray, mean, array
 # Caminhos para os datasets
 ITENS_PATH = "../datasets/filmes.csv"
 AVALIACOES_PATH = "../datasets/avaliacoes.csv"
-
+USUARIOS_PATH = "../datasets/usuarios.csv"
 # --- Variáveis Globais (Carregadas uma única vez) ---
 df_filmes = None
 tfidf_matrix = None
@@ -126,6 +127,82 @@ def gerar_recomendacoes(
 
     print(f"Geração de recomendações concluída. {len(recomendacoes)} filmes encontrados.")
     return recomendacoes
+
+
+def salvar_avaliacao(usuario_id: int, filme_id: int, avaliacao: int) -> bool:
+    """
+    Salva uma nova avaliação no arquivo avaliacoes.csv de forma persistente.
+    """
+
+    # Cria um novo DataFrame com o novo registro
+    novo_registro = pd.DataFrame([{
+        'usuario_id': usuario_id,
+        'filme_id': filme_id,
+        'avaliacao': avaliacao
+    }])
+
+    try:
+        # Verifica se o arquivo já existe para determinar se o cabeçalho deve ser incluído
+        file_exists = os.path.isfile(AVALIACOES_PATH)
+
+        # Abre o arquivo no modo 'append' (a)
+        # header=True apenas se o arquivo for novo, senão False para evitar duplicidade
+        novo_registro.to_csv(AVALIACOES_PATH,
+                             mode='a',
+                             index=False,
+                             header=not file_exists)
+        return True
+    except Exception as e:
+        print(f"ERRO ao salvar avaliação: {e}")
+        return False
+
+
+def carregar_e_listar_usuarios():
+    """
+    Carrega todos os IDs de usuário do avaliacoes.csv e, se possível,
+    combina com os nomes do usuarios.csv para retornar uma lista formatada
+    para o frontend.
+    """
+    all_users = set()
+
+    # 1. Obter todos os IDs únicos do dataset principal de avaliações
+    if os.path.exists(AVALIACOES_PATH):
+        avaliacoes = pd.read_csv(AVALIACOES_PATH)
+        all_users.update(avaliacoes['usuario_id'].unique())
+
+    # 2. Inicializar o DataFrame de saída com IDs e um nome padrão
+    df_users = pd.DataFrame(sorted(list(all_users)), columns=['usuario_id'])
+    df_users['nome'] = df_users['usuario_id'].apply(lambda x: f"Usuário {x}")  # Nome padrão
+
+    # 3. Ler e mesclar com nomes persistidos em usuarios.csv
+    if os.path.exists(USUARIOS_PATH):
+        df_nomes = pd.read_csv(USUARIOS_PATH)
+
+        if not df_nomes.empty and 'usuario_id' in df_nomes.columns and 'nome' in df_nomes.columns:
+            # Renomeia a coluna 'nome' do arquivo CSV para evitar conflito
+            df_nomes = df_nomes.rename(columns={'nome': 'nome_persistido'})
+            df_nomes = df_nomes.drop_duplicates(subset=['usuario_id'], keep='last')
+
+            # Merge: Usamos 'right' ou 'outer' para garantir que os novos IDs do usuarios.csv
+            # também sejam incluídos, mesmo que não estejam no avaliacoes.csv
+            df_users = pd.merge(df_users, df_nomes[['usuario_id', 'nome_persistido']],
+                                on='usuario_id',
+                                how='outer')
+
+            # Preenche o nome final: Se nome_persistido existe, usa ele, senão, usa o nome padrão
+            df_users['nome'] = df_users['nome_persistido'].combine_first(df_users['nome'])
+
+            # Remove a coluna temporária
+            df_users = df_users.drop(columns=['nome_persistido']).fillna("")
+
+    # Remove linhas duplicadas e garante o formato final
+    df_users = df_users.drop_duplicates(subset=['usuario_id'])
+    df_users = df_users.sort_values(by='usuario_id')
+
+    # 4. Converte para o formato de lista de dicionários esperado pelo frontend
+    usuarios_list = df_users[['usuario_id', 'nome']].to_dict('records')
+
+    return usuarios_list
 
 
 if __name__ == '__main__':
