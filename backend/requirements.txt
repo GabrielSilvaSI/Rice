@@ -1,6 +1,5 @@
 fastapi
-uvicorn
+uvicorn[standard] # Servidor que executa o FastAPI
 pandas
 scikit-learn
 numpy
-python-multipart
