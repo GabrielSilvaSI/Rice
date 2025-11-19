@@ -5,9 +5,6 @@ from numpy import ndarray
 import sys
 import os
 
-USUARIOS_PATH = "../datasets/usuarios.csv"  # Defina o caminho
-AVALIACOES_PATH = "../datasets/avaliacoes.csv"
-
 # Ajusta o caminho para importar recomendacao.py (lógica de ML)
 sys.path.append(os.path.dirname(__file__))
 from recomendacao import (
@@ -15,8 +12,14 @@ from recomendacao import (
     construir_perfil_usuario,
     gerar_recomendacoes,
     salvar_avaliacao,
-    carregar_e_listar_usuarios
+    carregar_e_listar_usuarios,
+    calcular_metricas_usuario
 )
+
+# --- Caminhos ---
+BASE_DIR = os.path.dirname(__file__)
+USUARIOS_PATH = os.path.join(BASE_DIR, "..", "datasets", "usuarios.csv")
+AVALIACOES_PATH = os.path.join(BASE_DIR, "..", "datasets", "avaliacoes.csv")
 
 # -----------------------------------------------------------
 # APP e VARIÁVEIS GLOBAIS
@@ -30,6 +33,7 @@ app = FastAPI(
 
 CATALOGO_FILMES: pd.DataFrame = None
 MATRIZ_VETORES: ndarray = None
+DF_AVALIACOES_GLOBAL: pd.DataFrame = None
 
 # -----------------------------------------------------------
 # STARTUP
@@ -40,16 +44,20 @@ def startup_event():
     """
     Função executada na inicialização. Carrega os dados e treina o vetorizador.
     """
-    global CATALOGO_FILMES, MATRIZ_VETORES
+    global CATALOGO_FILMES, MATRIZ_VETORES, DF_AVALIACOES_GLOBAL
     print("Iniciando carga de dados e vetorização...")
     try:
         df, matriz = carregar_dados_e_vetorizar()
         CATALOGO_FILMES = df
         MATRIZ_VETORES = matriz
-        print("✅ Backend RICE pronto.")
+        print("✅ Modelo de recomendação pronto.")
+        
+        if os.path.exists(AVALIACOES_PATH):
+            DF_AVALIACOES_GLOBAL = pd.read_csv(AVALIACOES_PATH)
+            print("✅ Dataset de avaliações carregado.")
+
     except Exception as e:
-        print(f"ERRO CRÍTICO na inicialização do modelo: {e}")
-        # Permite que a API continue rodando para servir outros endpoints (ex: /usuarios)
+        print(f"ERRO CRÍTICO na inicialização: {e}")
         pass
 
 # -----------------------------------------------------------
@@ -77,94 +85,89 @@ class AvaliacaoRequest(BaseModel):
 def get_itens():
     """Retorna o catálogo de filmes para o frontend."""
     if CATALOGO_FILMES is None:
-        raise HTTPException(status_code=503, detail="Catálogo de filmes não carregado. Verifique o log do servidor.")
-    return CATALOGO_FILMES[['Series_Title', 'Genre', 'Overview', 'Poster_Link']].reset_index().rename(
-        columns={'index': 'filme_id'}).to_dict('records')
+        raise HTTPException(status_code=503, detail="Catálogo de filmes não carregado.")
+    return CATALOGO_FILMES.reset_index().rename(columns={'index': 'filme_id'}).to_dict('records')
 
 @app.get("/usuarios")
 def get_usuarios():
-    """Retorna a lista de usuários (ID e Nome) do sistema."""
+    """Retorna a lista de usuários do sistema."""
     try:
-        usuarios_list = carregar_e_listar_usuarios()
-        return {"usuarios": usuarios_list}
-    except FileNotFoundError:
-        return {"usuarios": []}  # Retorna lista vazia se os arquivos não existirem
+        return {"usuarios": carregar_e_listar_usuarios()}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao carregar lista de usuários: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao carregar usuários: {e}")
 
 @app.post("/usuarios", status_code=201)
 def add_usuario(novo_usuario: UsuarioNovo):
     """Adiciona um novo usuário ao arquivo usuarios.csv."""
-    novo_registro = pd.DataFrame([{'usuario_id': novo_usuario.usuario_id, 'nome': novo_usuario.nome}])
+    novo_registro = pd.DataFrame([novo_usuario.dict()])
     try:
-        novo_registro.to_csv(
-            USUARIOS_PATH,
-            mode='a',
-            index=False,
-            header=not os.path.exists(USUARIOS_PATH)
-        )
-        return {"message": "Usuário salvo com sucesso", "usuario_id": novo_usuario.usuario_id}
+        header = not os.path.exists(USUARIOS_PATH)
+        novo_registro.to_csv(USUARIOS_PATH, mode='a', index=False, header=header)
+        return {"message": "Usuário salvo com sucesso"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao salvar usuário: {e}")
 
 @app.post("/avaliacoes", status_code=201)
 def add_avaliacao(request: AvaliacaoRequest):
     """Salva uma nova avaliação de filme para um usuário."""
-    sucesso = salvar_avaliacao(
-        usuario_id=request.usuario_id,
-        filme_id=request.filme_id,
-        avaliacao=request.avaliacao
-    )
-    if not sucesso:
-        raise HTTPException(status_code=500, detail="Falha interna ao persistir a avaliação.")
-    
-    # A função construir_perfil_usuario não é cacheada, então a nova avaliação
-    # será automaticamente considerada na próxima chamada a /recomendar.
+    if not salvar_avaliacao(request.usuario_id, request.filme_id, request.avaliacao):
+        raise HTTPException(status_code=500, detail="Falha ao persistir a avaliação.")
     return {"message": "Avaliação salva com sucesso."}
 
 @app.get("/avaliacoes/{usuario_id}")
 def get_avaliacoes_usuario(usuario_id: int):
-    """Retorna o histórico de avaliações de um usuário específico."""
-    if not os.path.exists(AVALIACOES_PATH):
-        return []
-    try:
-        df_avaliacoes = pd.read_csv(AVALIACOES_PATH)
-        user_ratings = df_avaliacoes[df_avaliacoes['usuario_id'] == usuario_id]
-        return user_ratings.to_dict('records')
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao ler o arquivo de avaliações: {e}")
+    """Retorna o histórico de avaliações de um usuário."""
+    if DF_AVALIACOES_GLOBAL is None: return []
+    user_ratings = DF_AVALIACOES_GLOBAL[DF_AVALIACOES_GLOBAL['usuario_id'] == usuario_id]
+    return user_ratings.to_dict('records')
 
 @app.post("/recomendar")
 def recomendar_filmes(request: RecomendacaoRequest):
     """Gera recomendações de filmes para um usuário."""
     if CATALOGO_FILMES is None or MATRIZ_VETORES is None:
-        raise HTTPException(status_code=503, detail="Modelo de recomendação não carregado. Verifique o log do servidor.")
+        raise HTTPException(status_code=503, detail="Modelo de recomendação não carregado.")
 
-    perfil_usuario = construir_perfil_usuario(
-        usuario_id=request.usuario_id,
-        df_itens=CATALOGO_FILMES,
-        tfidf_matriz=MATRIZ_VETORES
-    )
-    if perfil_usuario is None:
-        raise HTTPException(status_code=404, detail=f"Usuário {request.usuario_id} não encontrado ou sem avaliações positivas.")
+    perfil = construir_perfil_usuario(request.usuario_id, CATALOGO_FILMES, MATRIZ_VETORES)
+    if perfil is None:
+        raise HTTPException(status_code=404, detail="Usuário sem perfil para gerar recomendações.")
 
-    recomendacoes = gerar_recomendacoes(
-        perfil_usuario=perfil_usuario,
-        df_itens=CATALOGO_FILMES,
-        tfidf_matriz=MATRIZ_VETORES,
-        num_recomendacoes=request.num_recomendacoes
-    )
-
+    recomendacoes = gerar_recomendacoes(perfil, CATALOGO_FILMES, MATRIZ_VETORES, request.num_recomendacoes)
+    
     lista_final = []
     for titulo, score in recomendacoes:
-        filme = CATALOGO_FILMES[CATALOGO_FILMES['Series_Title'] == titulo].iloc[0]
+        filme_info = CATALOGO_FILMES[CATALOGO_FILMES['Series_Title'] == titulo].iloc[0]
         lista_final.append({
             "titulo": titulo,
             "similaridade": f"{score:.4f}",
-            "poster_link": filme['Poster_Link']
+            "poster_link": filme_info.get('Poster_Link')
         })
+    return {"recomendacoes": lista_final}
 
+@app.get("/metricas/{usuario_id}")
+def get_metricas(usuario_id: int, num_recomendacoes: int = 10):
+    """Calcula e retorna Precision, Recall e F1-score para o usuário."""
+    if CATALOGO_FILMES is None or MATRIZ_VETORES is None or DF_AVALIACOES_GLOBAL is None:
+        raise HTTPException(status_code=503, detail="Modelo ou dados de avaliação não carregados.")
+
+    perfil_usuario = construir_perfil_usuario(usuario_id, CATALOGO_FILMES, MATRIZ_VETORES)
+    if perfil_usuario is None:
+        raise HTTPException(status_code=404, detail="Usuário sem avaliações positivas para calcular o perfil.")
+
+    recomendacoes = gerar_recomendacoes(perfil_usuario, CATALOGO_FILMES, MATRIZ_VETORES, num_recomendacoes)
+    titulos_recomendados = [titulo for titulo, score in recomendacoes]
+
+    metricas = calcular_metricas_usuario(
+        usuario_id=usuario_id,
+        recomendacoes_do_sistema=titulos_recomendados,
+        df_avaliacoes_global=DF_AVALIACOES_GLOBAL,
+        df_filmes=CATALOGO_FILMES
+    )
+    
     return {
-        "usuario_id": request.usuario_id,
-        "recomendacoes": lista_final
+        "usuario_id": usuario_id,
+        "num_recomendacoes": num_recomendacoes,
+        "precision": f"{metricas['precision']:.4f}",
+        "recall": f"{metricas['recall']:.4f}",
+        "f1_score": f"{metricas['f1_score']:.4f}",
+        "detalhes": f"TP={metricas['tp_count']}, Gabarito={metricas['gabarito_count']}, Recomendados={metricas['recomendados_count']}"
     }
