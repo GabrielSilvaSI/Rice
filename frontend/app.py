@@ -150,7 +150,7 @@ def recommendation_page(user_id, catalogo_df, user_map):
                 st.error(f"Erro ao gerar recomendações: {e}")
 
 def evaluation_tab(user_id, user_map):
-    """Aba para exibir métricas de avaliação do sistema."""
+    """Aba para exibir métricas de avaliação do sistema e matriz de confusão."""
     st.title("📊 Avaliação do Sistema")
     if user_id is None:
         st.warning("Selecione um Usuário na aba 'Gerenciar Usuário' para calcular as métricas.")
@@ -171,15 +171,20 @@ def evaluation_tab(user_id, user_map):
         col3.metric("F1-Score", f"{float(metricas['f1_score']):.2f}")
         st.caption(f"Detalhes do cálculo: {metricas['detalhes']}")
 
-        st.markdown("### Gráfico de Métricas")
-        df_metricas = pd.DataFrame({
-            'Métrica': ['Precision', 'Recall', 'F1-Score'],
-            'Valor': [float(metricas['precision']), float(metricas['recall']), float(metricas['f1_score'])]
-        })
-        fig = px.bar(df_metricas, x='Métrica', y='Valor', title="Performance do Sistema de Recomendação",
-                     text=[f"{v:.2%}" for v in df_metricas['Valor']], range_y=[0,1])
-        fig.update_traces(textposition='outside')
-        st.plotly_chart(fig, use_container_width=True)
+        st.markdown("### Matriz de Confusão (Comparativo)")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.success(f"Verdadeiros Positivos (TP): {len(metricas['tp_titulos'])}")
+            st.expander("Ver Filmes").json(metricas['tp_titulos'])
+            
+            st.error(f"Falsos Negativos (FN): {len(metricas['fn_titulos'])}")
+            st.expander("Ver Filmes").json(metricas['fn_titulos'])
+        with col2:
+            st.warning(f"Falsos Positivos (FP): {len(metricas['fp_titulos'])}")
+            st.expander("Ver Filmes").json(metricas['fp_titulos'])
+
+            st.info(f"Verdadeiros Negativos (TN): {len(metricas['tn_titulos'])}")
+            st.expander("Ver Filmes").json(metricas['tn_titulos'])
 
     except requests.HTTPError as e:
         st.error(f"Erro no cálculo (Backend): {e.response.json().get('detail', 'Erro')}")

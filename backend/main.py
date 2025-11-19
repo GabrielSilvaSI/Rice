@@ -169,5 +169,9 @@ def get_metricas(usuario_id: int, num_recomendacoes: int = 10):
         "precision": f"{metricas['precision']:.4f}",
         "recall": f"{metricas['recall']:.4f}",
         "f1_score": f"{metricas['f1_score']:.4f}",
-        "detalhes": f"TP={metricas['tp_count']}, Gabarito={metricas['gabarito_count']}, Recomendados={metricas['recomendados_count']}"
+        "detalhes": f"TP={metricas['tp_count']}, Gabarito={metricas['gabarito_count']}, Recomendados={metricas['recomendados_count']}",
+        "tp_titulos": metricas['tp_titulos'],
+        "fp_titulos": metricas['fp_titulos'],
+        "fn_titulos": metricas['fn_titulos'],
+        "tn_titulos": metricas['tn_titulos']
     }

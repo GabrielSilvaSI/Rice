@@ -132,27 +132,38 @@ def calcular_metricas_usuario(
     df_filmes: pd.DataFrame
 ) -> dict:
     """
-    Calcula Precision, Recall e F1-score comparando as recomendações do sistema
-    com o que o usuário gostou (gabarito).
+    Calcula Precision, Recall, F1-score e a matriz de confusão
+    (TP, FP, FN, TN) para as recomendações.
     """
+    # 1. Obter gabarito (filmes que o usuário gostou e não gostou)
     gabarito_positivos_ids = df_avaliacoes_global[
-        (df_avaliacoes_global['usuario_id'] == usuario_id) &
-        (df_avaliacoes_global['avaliacao'] == 1)
+        (df_avaliacoes_global['usuario_id'] == usuario_id) & (df_avaliacoes_global['avaliacao'] == 1)
+    ]['filme_id'].unique()
+    
+    gabarito_negativos_ids = df_avaliacoes_global[
+        (df_avaliacoes_global['usuario_id'] == usuario_id) & (df_avaliacoes_global['avaliacao'] == 0)
     ]['filme_id'].unique()
 
-    if len(gabarito_positivos_ids) == 0:
-        return {"precision": 0.0, "recall": 0.0, "f1_score": 0.0, "tp_count": 0, "gabarito_count": 0, "recomendados_count": len(recomendacoes_do_sistema), "mensagem": "Usuário sem avaliações positivas no gabarito."}
+    # Mapear IDs para Títulos
+    gabarito_positivos_titulos = set(df_filmes.iloc[gabarito_positivos_ids]['Series_Title'])
+    gabarito_negativos_titulos = set(df_filmes.iloc[gabarito_negativos_ids]['Series_Title'])
+    
+    recomendacoes_set = set(recomendacoes_do_sistema)
 
-    gabarito_titulos = df_filmes.iloc[gabarito_positivos_ids]['Series_Title'].tolist()
+    # 2. Calcular Matriz de Confusão
+    tp_titulos = recomendacoes_set & gabarito_positivos_titulos
+    fp_titulos = recomendacoes_set & gabarito_negativos_titulos
+    fn_titulos = gabarito_positivos_titulos - recomendacoes_set
+    tn_titulos = gabarito_negativos_titulos - recomendacoes_set
 
-    tp_titulos = set(recomendacoes_do_sistema) & set(gabarito_titulos)
     TP = len(tp_titulos)
-
+    
+    # 3. Calcular Métricas
     total_recomendacoes = len(recomendacoes_do_sistema)
     precision = TP / total_recomendacoes if total_recomendacoes > 0 else 0.0
 
-    total_gabarito = len(gabarito_titulos)
-    recall = TP / total_gabarito if total_gabarito > 0 else 0.0
+    total_gabarito_positivos = len(gabarito_positivos_titulos)
+    recall = TP / total_gabarito_positivos if total_gabarito_positivos > 0 else 0.0
 
     f1_score = 0.0
     if precision + recall > 0:
@@ -163,6 +174,10 @@ def calcular_metricas_usuario(
         "recall": recall,
         "f1_score": f1_score,
         "tp_count": TP,
-        "gabarito_count": total_gabarito,
-        "recomendados_count": total_recomendacoes
+        "gabarito_count": total_gabarito_positivos,
+        "recomendados_count": total_recomendacoes,
+        "tp_titulos": list(tp_titulos),
+        "fp_titulos": list(fp_titulos),
+        "fn_titulos": list(fn_titulos),
+        "tn_titulos": list(tn_titulos)
     }
