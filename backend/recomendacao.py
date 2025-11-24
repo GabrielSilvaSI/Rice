@@ -47,7 +47,13 @@ def construir_perfil_usuario(usuario_id: int, df_itens: pd.DataFrame, tfidf_matr
     """Constrói o perfil do usuário como a média dos vetores dos itens preferidos (avaliação = 1)."""
     try:
         if not os.path.exists(AVALIACOES_PATH): return None
-        df_avaliacoes = pd.read_csv(AVALIACOES_PATH)
+        # Robustez: pular linhas mal formatadas
+        try:
+            df_avaliacoes = pd.read_csv(AVALIACOES_PATH, on_bad_lines='skip')
+        except TypeError:
+            # Fallback para versões antigas do pandas
+            df_avaliacoes = pd.read_csv(AVALIACOES_PATH, error_bad_lines=False)
+
         avaliacoes_positivas = df_avaliacoes[
             (df_avaliacoes['usuario_id'] == usuario_id) &
             (df_avaliacoes['avaliacao'] == 1)
@@ -72,17 +78,30 @@ def gerar_recomendacoes(
         perfil_usuario: ndarray,
         df_itens: pd.DataFrame,
         tfidf_matriz: ndarray,
-        num_recomendacoes: int = 10
+        num_recomendacoes: int = 10,
+        filmes_assistidos_ids: list[int] = None
 ) -> list[tuple[str, float]]:
-    """Calcula a Similaridade do Cosseno e retorna os filmes mais similares."""
+    """Calcula a Similaridade do Cosseno e retorna os filmes mais similares, excluindo os já assistidos."""
     if perfil_usuario is None: return []
 
     similaridade_scores = linear_kernel(perfil_usuario, tfidf_matriz).flatten()
+    
+    # Filtrar filmes já assistidos zerando o score (ou removendo da lista de índices)
+    # Filtrar filmes já assistidos zerando o score (ou removendo da lista de índices)
+    if filmes_assistidos_ids:
+        # filme_id é o índice do dataframe (baseado em construir_perfil_usuario)
+        # Filtramos apenas índices válidos para evitar erro de limites
+        indices_validos = [idx for idx in filmes_assistidos_ids if 0 <= idx < len(df_itens)]
+        similaridade_scores[indices_validos] = -1  # Define score negativo para não ser recomendado
+
     indices_ordenados = similaridade_scores.argsort()[::-1]
 
     recomendacoes = []
     for i in indices_ordenados:
         if len(recomendacoes) >= num_recomendacoes: break
+        # Ignora se o score for muito baixo (caso tenhamos zerado todos)
+        if similaridade_scores[i] < 0: continue
+        
         titulo = df_itens.iloc[i]['Series_Title']
         score = similaridade_scores[i]
         recomendacoes.append((titulo, score))
@@ -91,12 +110,39 @@ def gerar_recomendacoes(
 
 
 def salvar_avaliacao(usuario_id: int, filme_id: int, avaliacao: int) -> bool:
-    """Salva uma nova avaliação no arquivo avaliacoes.csv."""
-    novo_registro = pd.DataFrame([{'usuario_id': usuario_id, 'filme_id': filme_id, 'avaliacao': avaliacao}])
+    """Salva uma nova avaliação no arquivo avaliacoes.csv (Upsert + Sort)."""
     try:
-        file_exists = os.path.isfile(AVALIACOES_PATH)
-        novo_registro.to_csv(AVALIACOES_PATH, mode='a', index=False, header=not file_exists)
+        # 1. Carregar dados existentes
+        if os.path.exists(AVALIACOES_PATH):
+            try:
+                df = pd.read_csv(AVALIACOES_PATH, on_bad_lines='skip')
+            except TypeError:
+                df = pd.read_csv(AVALIACOES_PATH, error_bad_lines=False)
+        else:
+            df = pd.DataFrame(columns=['usuario_id', 'filme_id', 'avaliacao'])
+
+        # 2. Upsert (Atualizar ou Adicionar)
+        # Garante que não haja duplicatas antes de processar
+        df.drop_duplicates(subset=['usuario_id', 'filme_id'], keep='last', inplace=True)
+
+        # Verifica se já existe
+        mask = (df['usuario_id'] == usuario_id) & (df['filme_id'] == filme_id)
+        
+        if mask.any():
+            # Atualiza
+            df.loc[mask, 'avaliacao'] = avaliacao
+        else:
+            # Adiciona
+            novo_registro = pd.DataFrame([{'usuario_id': usuario_id, 'filme_id': filme_id, 'avaliacao': avaliacao}])
+            df = pd.concat([df, novo_registro], ignore_index=True)
+
+        # 3. Ordenar
+        df = df.sort_values(by=['usuario_id', 'filme_id'])
+
+        # 4. Salvar
+        df.to_csv(AVALIACOES_PATH, index=False)
         return True
+
     except Exception as e:
         print(f"ERRO ao salvar avaliação: {e}")
         return False

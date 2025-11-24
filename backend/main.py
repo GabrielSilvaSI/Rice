@@ -112,14 +112,37 @@ def add_avaliacao(request: AvaliacaoRequest):
     """Salva uma nova avaliação de filme para um usuário."""
     if not salvar_avaliacao(request.usuario_id, request.filme_id, request.avaliacao):
         raise HTTPException(status_code=500, detail="Falha ao persistir a avaliação.")
+    
+    # Atualiza o estado global para refletir a nova avaliação imediatamente
+    global DF_AVALIACOES_GLOBAL
+    if os.path.exists(AVALIACOES_PATH):
+        try:
+            # Robustez: pular linhas mal formatadas (mesma lógica do recomendacao.py)
+            try:
+                DF_AVALIACOES_GLOBAL = pd.read_csv(AVALIACOES_PATH, on_bad_lines='skip')
+            except TypeError:
+                DF_AVALIACOES_GLOBAL = pd.read_csv(AVALIACOES_PATH, error_bad_lines=False)
+        except Exception as e:
+            print(f"Erro ao recarregar avaliações: {e}")
+
     return {"message": "Avaliação salva com sucesso."}
 
 @app.get("/avaliacoes/{usuario_id}")
 def get_avaliacoes_usuario(usuario_id: int):
     """Retorna o histórico de avaliações de um usuário."""
-    if DF_AVALIACOES_GLOBAL is None: return []
-    user_ratings = DF_AVALIACOES_GLOBAL[DF_AVALIACOES_GLOBAL['usuario_id'] == usuario_id]
-    return user_ratings.to_dict('records')
+    if not os.path.exists(AVALIACOES_PATH): return []
+    try:
+        # Lê diretamente do disco para garantir dados atualizados
+        try:
+            df_avaliacoes = pd.read_csv(AVALIACOES_PATH, on_bad_lines='skip')
+        except TypeError:
+            df_avaliacoes = pd.read_csv(AVALIACOES_PATH, error_bad_lines=False)
+            
+        user_ratings = df_avaliacoes[df_avaliacoes['usuario_id'] == usuario_id]
+        return user_ratings.to_dict('records')
+    except Exception as e:
+        print(f"Erro ao ler avaliações: {e}")
+        return []
 
 @app.post("/recomendar")
 def recomendar_filmes(request: RecomendacaoRequest):
@@ -131,7 +154,26 @@ def recomendar_filmes(request: RecomendacaoRequest):
     if perfil is None:
         raise HTTPException(status_code=404, detail="Usuário sem perfil para gerar recomendações.")
 
-    recomendacoes = gerar_recomendacoes(perfil, CATALOGO_FILMES, MATRIZ_VETORES, request.num_recomendacoes)
+    # Obter filmes já assistidos para filtrar
+    filmes_assistidos = []
+    if os.path.exists(AVALIACOES_PATH):
+        try:
+            try:
+                df_avaliacoes = pd.read_csv(AVALIACOES_PATH, on_bad_lines='skip')
+            except TypeError:
+                df_avaliacoes = pd.read_csv(AVALIACOES_PATH, error_bad_lines=False)
+            
+            filmes_assistidos = df_avaliacoes[df_avaliacoes['usuario_id'] == request.usuario_id]['filme_id'].tolist()
+        except Exception:
+            pass
+
+    recomendacoes = gerar_recomendacoes(
+        perfil, 
+        CATALOGO_FILMES, 
+        MATRIZ_VETORES, 
+        request.num_recomendacoes,
+        filmes_assistidos_ids=filmes_assistidos
+    )
     
     lista_final = []
     for titulo, score in recomendacoes:
@@ -146,8 +188,20 @@ def recomendar_filmes(request: RecomendacaoRequest):
 @app.get("/metricas/{usuario_id}")
 def get_metricas(usuario_id: int, num_recomendacoes: int = 10):
     """Calcula e retorna Precision, Recall e F1-score para o usuário."""
-    if CATALOGO_FILMES is None or MATRIZ_VETORES is None or DF_AVALIACOES_GLOBAL is None:
-        raise HTTPException(status_code=503, detail="Modelo ou dados de avaliação não carregados.")
+    if CATALOGO_FILMES is None or MATRIZ_VETORES is None:
+        raise HTTPException(status_code=503, detail="Modelo não carregado.")
+
+    if not os.path.exists(AVALIACOES_PATH):
+        raise HTTPException(status_code=503, detail="Dados de avaliação não encontrados.")
+
+    try:
+        # Lê diretamente do disco para garantir dados atualizados
+        try:
+            df_avaliacoes_global = pd.read_csv(AVALIACOES_PATH, on_bad_lines='skip')
+        except TypeError:
+            df_avaliacoes_global = pd.read_csv(AVALIACOES_PATH, error_bad_lines=False)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao ler avaliações: {e}")
 
     perfil_usuario = construir_perfil_usuario(usuario_id, CATALOGO_FILMES, MATRIZ_VETORES)
     if perfil_usuario is None:
@@ -159,7 +213,7 @@ def get_metricas(usuario_id: int, num_recomendacoes: int = 10):
     metricas = calcular_metricas_usuario(
         usuario_id=usuario_id,
         recomendacoes_do_sistema=titulos_recomendados,
-        df_avaliacoes_global=DF_AVALIACOES_GLOBAL,
+        df_avaliacoes_global=df_avaliacoes_global,
         df_filmes=CATALOGO_FILMES
     )
     

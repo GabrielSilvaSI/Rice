@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import plotly.express as px
+import time
 
 # URL base do seu backend FastAPI
 BASE_URL = "http://127.0.0.1:8000"
@@ -95,19 +96,23 @@ def add_evaluation_page(user_id, catalogo_df, user_map):
     filme_id = catalogo_df[catalogo_df['display_name'] == filme_selecionado]['filme_id'].iloc[0]
     avaliacao = st.radio("Gostou do filme?", options=[1, 0], format_func=lambda x: "👍 Sim" if x == 1 else "👎 Não")
 
+
+
     if st.button("Submeter Avaliação"):
         payload = {"usuario_id": user_id, "filme_id": int(filme_id), "avaliacao": int(avaliacao)}
         try:
             response = requests.post(f"{BASE_URL}/avaliacoes", json=payload)
             response.raise_for_status()
             st.success("Avaliação submetida com sucesso!")
+            time.sleep(0.5) # Aguarda um pouco para garantir que o backend processou o arquivo
             st.rerun()
         except Exception as e:
             st.error(f"Erro ao submeter avaliação: {e}")
 
     st.subheader("Histórico de Avaliações")
     try:
-        response = requests.get(f"{BASE_URL}/avaliacoes/{user_id}")
+        # Adiciona timestamp para evitar cache
+        response = requests.get(f"{BASE_URL}/avaliacoes/{user_id}", params={"t": time.time()})
         response.raise_for_status()
         avaliacoes = response.json()
         if avaliacoes:
