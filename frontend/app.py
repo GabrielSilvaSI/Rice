@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import plotly.express as px
+import time
 
 # URL base do seu backend FastAPI
 BASE_URL = "http://127.0.0.1:8000"
@@ -17,7 +18,11 @@ def get_catalogo():
     try:
         response = requests.get(f"{BASE_URL}/itens")
         response.raise_for_status()
-        return pd.DataFrame(response.json())
+        # Assegura que 'filme_id' seja o índice para buscas rápidas
+        df = pd.DataFrame(response.json())
+        if 'filme_id' in df.columns:
+            df = df.set_index('filme_id')
+        return df
     except Exception as e:
         st.error(f"Erro ao carregar catálogo. Backend está OK? {e}")
         st.stop()
@@ -90,28 +95,38 @@ def add_evaluation_page(user_id, catalogo_df, user_map):
         return
 
     st.subheader(f"Avaliar Filmes para: {user_map.get(user_id, f'ID {user_id}')}")
-    catalogo_df['display_name'] = catalogo_df.apply(lambda row: f"{row['Series_Title']} ({row['filme_id']})", axis=1)
-    filme_selecionado = st.selectbox("Selecione o Filme:", options=catalogo_df['display_name'].tolist())
-    filme_id = catalogo_df[catalogo_df['display_name'] == filme_selecionado]['filme_id'].iloc[0]
+    
+    # Criar display_name a partir do índice (filme_id) e Series_Title
+    catalogo_df_reset = catalogo_df.reset_index()
+    catalogo_df_reset['display_name'] = catalogo_df_reset.apply(lambda row: f"{row['Series_Title']} ({row['filme_id']})", axis=1)
+    
+    filme_selecionado = st.selectbox("Selecione o Filme:", options=catalogo_df_reset['display_name'].tolist())
+    filme_id = int(filme_selecionado.split('(')[-1].replace(')', ''))
+    
     avaliacao = st.radio("Gostou do filme?", options=[1, 0], format_func=lambda x: "👍 Sim" if x == 1 else "👎 Não")
 
     if st.button("Submeter Avaliação"):
-        payload = {"usuario_id": user_id, "filme_id": int(filme_id), "avaliacao": int(avaliacao)}
+        payload = {"usuario_id": user_id, "filme_id": filme_id, "avaliacao": int(avaliacao)}
         try:
             response = requests.post(f"{BASE_URL}/avaliacoes", json=payload)
             response.raise_for_status()
             st.success("Avaliação submetida com sucesso!")
+            time.sleep(0.5)
             st.rerun()
         except Exception as e:
             st.error(f"Erro ao submeter avaliação: {e}")
 
     st.subheader("Histórico de Avaliações")
     try:
-        response = requests.get(f"{BASE_URL}/avaliacoes/{user_id}")
+        response = requests.get(f"{BASE_URL}/avaliacoes/{user_id}", params={"t": time.time()})
         response.raise_for_status()
         avaliacoes = response.json()
         if avaliacoes:
-            st.dataframe(pd.DataFrame(avaliacoes))
+            df_avaliacoes = pd.DataFrame(avaliacoes)
+            # Mapear filme_id para título e avaliação para ícone
+            df_avaliacoes['Filme'] = df_avaliacoes['filme_id'].map(catalogo_df['Series_Title'])
+            df_avaliacoes['Avaliação'] = df_avaliacoes['avaliacao'].apply(lambda x: "👍" if x == 1 else "👎")
+            st.dataframe(df_avaliacoes[['Filme', 'Avaliação']])
         else:
             st.info("Usuário sem avaliações.")
     except Exception as e:
@@ -160,7 +175,7 @@ def evaluation_tab(user_id, user_map):
     num_rec_eval = st.slider("Número de Recomendações para Avaliação:", 5, 20, 10, key="num_rec_slider_eval")
 
     try:
-        response = requests.get(f"{BASE_URL}/metricas/{user_id}", params={"num_recomendacoes": num_rec_eval})
+        response = requests.get(f"{BASE_URL}/metricas/{user_id}", params={"num_recomendacoes": num_rec_eval, "t": time.time()})
         response.raise_for_status()
         metricas = response.json()
 
