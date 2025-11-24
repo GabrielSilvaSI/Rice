@@ -1,4 +1,4 @@
-# 🎬 RICE: Recomendações Inteligentes para Cinema e Entretenimento
+# 🍚 RICE: Recomendações Inteligentes para Cinema e Entretenimento
 
 Este projeto foi desenvolvido como parte de uma avaliação acadêmica, seguindo as diretrizes de criar um sistema de recomendação completo e funcional. O RICE (Recomendações Inteligentes para Cinema e Entretenimento) é uma aplicação que utiliza técnicas de **filtragem baseada em conteúdo** para sugerir filmes aos usuários de forma personalizada e interativa.
 
